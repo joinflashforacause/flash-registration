@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block nav %}<a href="/">Desk View →</a>{% endblock %}
+{% block content %}
+
+<div class="stat-grid">
+  <div class="stat-box"><div class="stat-num" id="statPeople">0</div><div class="stat-label">Total People</div></div>
+  <div class="stat-box"><div class="stat-num" id="statContrib">0</div><div class="stat-label">Contributors</div></div>
+  <div class="stat-box"><div class="stat-num" id="statWalkin">0</div><div class="stat-label">Walk-ins</div></div>
+</div>
+
+<div class="card" style="margin-top:14px;">
+  <strong>Live Check-in Feed</strong>
+  <div id="feed" style="margin-top:10px;"></div>
+</div>
+
+<script>
+async function refresh() {
+  const res = await fetch('/api/stats');
+  const d = await res.json();
+  document.getElementById('statPeople').textContent = d.total_people;
+  document.getElementById('statContrib').textContent = d.contributor_checkins;
+  document.getElementById('statWalkin').textContent = d.walkin_checkins;
+
+  document.getElementById('feed').innerHTML = d.recent.map(r => `
+    <div class="feed-item">
+      <div>
+        <strong>${r.name}</strong> ${r.is_walkin ? '<span class="badge warn">walk-in</span>' : ''}
+        <div class="result-sub">${r.desk || ''} ${r.family_count > 1 ? '· ' + r.family_count + ' people' : ''}</div>
+      </div>
+      <div class="result-sub">${r.checked_in_at}</div>
+    </div>
+  `).join('');
+}
+refresh();
+setInterval(refresh, 4000);
+</script>
+{% endblock %}

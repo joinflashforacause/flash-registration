@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block nav %}<a href="/dashboard">Live View →</a>{% endblock %}
+{% block content %}
+
+<div class="card" style="padding:10px 16px;">
+  <label style="font-size:12px;color:#6b7280;">Desk name</label>
+  <input id="deskName" placeholder="e.g. Desk 1 - Srikanth" style="margin-bottom:0;" />
+</div>
+
+<div class="card">
+  <input id="searchBox" placeholder="Type name or phone number..." autocomplete="off"
+         autofocus style="font-size:20px;padding:16px;margin-bottom:8px;" />
+  <div id="results"></div>
+</div>
+
+<div class="card">
+  <strong style="font-size:14px;">Not found? Add walk-in</strong>
+  <div style="margin-top:8px;">
+    <input id="wName" placeholder="Full name" style="font-size:18px;padding:14px;" />
+    <div style="display:flex; gap:8px;">
+      <input id="wPhone" placeholder="Phone (optional)" style="font-size:18px;padding:14px;" />
+      <div class="stepper" style="flex-shrink:0;">
+        <button type="button" class="step-btn" onclick="adjustWalkinCount(-1)">−</button>
+        <span id="wFamilyDisplay" style="min-width:28px;text-align:center;font-size:18px;font-weight:600;">1</span>
+        <button type="button" class="step-btn" onclick="adjustWalkinCount(1)">+</button>
+      </div>
+    </div>
+    <button onclick="submitWalkin()" style="font-size:18px;padding:16px;background:#374151;">Check In Walk-in</button>
+  </div>
+</div>
+
+<style>
+  .stepper { display:flex; align-items:center; gap:6px; background:#f3f4f6; border-radius:8px; padding:0 8px; }
+  .step-btn {
+    width:34px; height:34px; border-radius:6px; background:#e5e7eb; color:#111827;
+    font-size:20px; font-weight:700; line-height:1; padding:0; display:flex; align-items:center; justify-content:center;
+  }
+  .result-card { border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:10px; }
+  .result-top { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .result-name { font-weight:700; font-size:17px; }
+  .result-sub { font-size:12.5px; color:#6b7280; margin-top:2px; line-height:1.5; }
+  .chip { display:inline-block; background:#f3f4f6; border-radius:6px; padding:1px 6px; margin-right:4px; }
+  .result-actions { display:flex; align-items:center; gap:8px; margin-top:10px; }
+  .big-checkin {
+    background:#16a34a; font-size:17px; padding:14px; border-radius:8px; width:auto; flex:1;
+  }
+</style>
+
+<script>
+const deskInput = document.getElementById('deskName');
+deskInput.value = localStorage.getItem('flash_desk') || '';
+deskInput.addEventListener('change', () => localStorage.setItem('flash_desk', deskInput.value));
+
+let debounceTimer;
+let lastResults = [];
+const searchBox = document.getElementById('searchBox');
+
+searchBox.addEventListener('input', (e) => {
+  clearTimeout(debounceTimer);
+  const q = e.target.value.trim();
+  if (q.length < 2) { document.getElementById('results').innerHTML = ''; lastResults = []; return; }
+  debounceTimer = setTimeout(() => doSearch(q), 150);
+});
+
+// Enter key = instant check-in if exactly one match
+searchBox.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && lastResults.length === 1 && !lastResults[0].already_checked_in) {
+    checkinExisting(lastResults[0].contributor_id, null);
+  }
+});
+
+async function doSearch(q) {
+  const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+  const data = await res.json();
+  lastResults = data;
+  const box = document.getElementById('results');
+  if (data.length === 0) {
+    box.innerHTML = '<p style="color:#6b7280;font-size:14px;">No match — add as walk-in below.</p>';
+    return;
+  }
+  box.innerHTML = data.map((r, i) => `
+    <div class="result-card" id="card-${i}">
+      <div class="result-top">
+        <div>
+          <div class="result-name">${r.name}</div>
+          <div class="result-sub">
+            ${r.amb_id ? `<span class="chip">${r.amb_id}</span>` : ''}
+            ${r.phone ? `<span class="chip">${r.phone}</span>` : ''}
+            ${r.txn_date ? `<span class="chip">${r.txn_date}</span>` : ''}
+            ${r.amount ? `<span class="chip">₹${r.amount}</span>` : ''}
+            ${r.txn_no ? `<span class="chip">txn ..${r.txn_no}</span>` : ''}
+          </div>
+        </div>
+        ${r.already_checked_in ? `<span class="badge">✓ ${r.checked_in_at}<br>${r.checked_in_desk}</span>` : ''}
+      </div>
+      ${r.already_checked_in ? '' : `
+      <div class="result-actions">
+        <div class="stepper">
+          <button type="button" class="step-btn" onclick="adjustCount(${i}, -1)">−</button>
+          <span id="count-${i}" style="min-width:24px;text-align:center;font-weight:600;">1</span>
+          <button type="button" class="step-btn" onclick="adjustCount(${i}, 1)">+</button>
+        </div>
+        <button class="big-checkin" onclick="checkinExisting(${r.contributor_id}, ${i})">Check In</button>
+      </div>`}
+    </div>
+  `).join('');
+}
+
+function adjustCount(i, delta) {
+  const el = document.getElementById(`count-${i}`);
+  let v = Math.max(1, parseInt(el.textContent) + delta);
+  el.textContent = v;
+}
+
+async function checkinExisting(contributorId, i) {
+  const familyCount = i !== null ? document.getElementById(`count-${i}`).textContent : "1";
+  const desk = deskInput.value || 'Unknown Desk';
+  const res = await fetch('/api/checkin', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({mode: 'existing', contributor_id: contributorId, family_count: familyCount, desk})
+  });
+  const data = await res.json();
+  if (data.ok) {
+    showToast(`✓ ${data.name} checked in at ${data.checked_in_at}`);
+    searchBox.value = '';
+    document.getElementById('results').innerHTML = '';
+    lastResults = [];
+    searchBox.focus();
+  } else if (data.already_checked_in) {
+    showToast(`Already checked in at ${data.checked_in_at} by ${data.checked_in_desk}`, 3000);
+  } else {
+    showToast('Error: ' + (data.error || 'unknown'));
+  }
+}
+
+let walkinCount = 1;
+function adjustWalkinCount(delta) {
+  walkinCount = Math.max(1, walkinCount + delta);
+  document.getElementById('wFamilyDisplay').textContent = walkinCount;
+}
+
+async function submitWalkin() {
+  const name = document.getElementById('wName').value.trim();
+  const phone = document.getElementById('wPhone').value.trim();
+  const desk = deskInput.value || 'Unknown Desk';
+  if (!name) { showToast('Please enter a name'); return; }
+
+  const res = await fetch('/api/checkin', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({mode: 'walkin', name, phone, village: '', family_count: walkinCount, desk})
+  });
+  const data = await res.json();
+  if (data.ok) {
+    showToast(`✓ ${data.name} checked in at ${data.checked_in_at}`);
+    document.getElementById('wName').value = '';
+    document.getElementById('wPhone').value = '';
+    walkinCount = 1;
+    document.getElementById('wFamilyDisplay').textContent = 1;
+    searchBox.focus();
+  } else {
+    showToast('Error: ' + (data.error || 'unknown'));
+  }
+}
+</script>
+{% endblock %}
+
