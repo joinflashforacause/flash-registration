@@ -72,6 +72,7 @@ def api_search():
 
     conn = get_conn()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
     cur.execute("""
         SELECT c.id, c.amb_id, c.name, c.phone, c.village, c.photo_url,
                c.txn_date, c.amount, c.txn_no,
@@ -82,13 +83,24 @@ def api_search():
         ORDER BY (c.phone = %s) DESC, c.name
         LIMIT 20
     """, (f"%{q}%", f"%{q}%", f"%{q}%", q))
-    rows = cur.fetchall()
+    contrib_rows = cur.fetchall()
+
+    cur.execute("""
+        SELECT id, name, phone, family_count, desk, checked_in_at
+        FROM checkins
+        WHERE is_walkin = TRUE AND (phone ILIKE %s OR name ILIKE %s)
+        ORDER BY checked_in_at DESC
+        LIMIT 10
+    """, (f"%{q}%", f"%{q}%"))
+    walkin_rows = cur.fetchall()
+
     cur.close()
     conn.close()
 
     results = []
-    for r in rows:
+    for r in contrib_rows:
         results.append({
+            "source": "contributor",
             "contributor_id": r["id"],
             "amb_id": r["amb_id"],
             "name": r["name"],
@@ -100,6 +112,22 @@ def api_search():
             "txn_no": (r["txn_no"] or "")[-4:] if r["txn_no"] else None,
             "already_checked_in": r["checkin_id"] is not None,
             "checked_in_at": r["checked_in_at"].strftime("%I:%M %p") if r["checked_in_at"] else None,
+            "checked_in_desk": r["desk"],
+        })
+    for r in walkin_rows:
+        results.append({
+            "source": "walkin",
+            "contributor_id": None,
+            "amb_id": None,
+            "name": r["name"],
+            "phone": r["phone"],
+            "village": None,
+            "photo_url": None,
+            "txn_date": None,
+            "amount": None,
+            "txn_no": None,
+            "already_checked_in": True,
+            "checked_in_at": r["checked_in_at"].strftime("%I:%M %p"),
             "checked_in_desk": r["desk"],
         })
     return jsonify(results)
