@@ -82,7 +82,7 @@ async function doSearch(q) {
     <div class="result-card" id="card-${i}">
       <div class="result-top">
         <div>
-          <div class="result-name">${r.name}</div>
+          <div class="result-name">${r.name} <span class="chip" style="background:${r.source === 'walkin' ? '#fef3c7' : '#e0f2fe'};">${r.source === 'walkin' ? 'walk-in (not on contributor list)' : 'contributor'}</span></div>
           <div class="result-sub">
             ${r.amb_id ? `<span class="chip">${r.amb_id}</span>` : ''}
             ${r.phone ? `<span class="chip">${r.phone}</span>` : ''}
@@ -93,7 +93,7 @@ async function doSearch(q) {
         </div>
         ${r.already_checked_in ? `<span class="badge">✓ ${r.checked_in_at}<br>${r.checked_in_desk}</span>` : ''}
       </div>
-      ${r.already_checked_in ? '' : `
+      ${(r.already_checked_in || r.source === 'walkin') ? '' : `
       <div class="result-actions">
         <div class="stepper">
           <button type="button" class="step-btn" onclick="adjustCount(${i}, -1)">−</button>
@@ -165,4 +165,3 @@ async function submitWalkin() {
 }
 </script>
 {% endblock %}
-
