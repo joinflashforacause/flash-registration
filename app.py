@@ -1,17 +1,29 @@
 import os
 import datetime
+from zoneinfo import ZoneInfo
 import psycopg2
 import psycopg2.extras
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "flash-dev-secret-change-me")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+REGISTRATION_PIN = os.environ.get("REGISTRATION_PIN", "")  # set this on Render
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def get_conn():
     conn = psycopg2.connect(DATABASE_URL, sslmode="require")
     return conn
+
+
+def fmt_ist(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(IST).strftime("%I:%M %p")
 
 
 def init_db():
@@ -41,7 +53,7 @@ def init_db():
             village TEXT,
             family_count INTEGER DEFAULT 1,
             desk TEXT,
-            checked_in_at TIMESTAMP DEFAULT NOW()
+            checked_in_at TIMESTAMPTZ DEFAULT NOW()
         );
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_contrib_phone ON contributors (phone);")
@@ -49,9 +61,51 @@ def init_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_checkin_phone ON checkins (phone);")
     for col, coltype in [("txn_date", "TEXT"), ("amount", "TEXT"), ("txn_no", "TEXT")]:
         cur.execute(f"ALTER TABLE contributors ADD COLUMN IF NOT EXISTS {col} {coltype};")
+    # Migrate checked_in_at to TIMESTAMPTZ if it was created earlier as plain TIMESTAMP
+    try:
+        cur.execute("""
+            ALTER TABLE checkins
+            ALTER COLUMN checked_in_at TYPE TIMESTAMPTZ
+            USING checked_in_at AT TIME ZONE 'UTC';
+        """)
+    except Exception:
+        conn.rollback()
     conn.commit()
     cur.close()
     conn.close()
+
+
+@app.before_request
+def require_pin():
+    if not REGISTRATION_PIN:
+        return  # no PIN configured, skip auth (not recommended for event day)
+    if request.path in ("/login", "/static") or request.path.startswith("/static/"):
+        return
+    if not session.get("authed"):
+        if request.path.startswith("/api/"):
+            return jsonify({"ok": False, "error": "Not authenticated"}), 401
+        return redirect(url_for("login"))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    if request.method == "POST":
+        if request.form.get("pin") == REGISTRATION_PIN:
+            session["authed"] = True
+            return redirect(url_for("index"))
+        error = "Wrong PIN"
+    return f"""
+    <html><body style="font-family:sans-serif;max-width:320px;margin:80px auto;text-align:center;">
+    <h2>FLASH Registration</h2>
+    <form method="post">
+      <input name="pin" type="password" placeholder="Enter event PIN"
+             style="font-size:20px;padding:14px;width:100%;box-sizing:border-box;margin-bottom:10px;" autofocus />
+      <button style="font-size:18px;padding:14px;width:100%;background:#b91c1c;color:white;border:none;border-radius:8px;">Enter</button>
+    </form>
+    {'<p style="color:red;">' + error + '</p>' if error else ''}
+    </body></html>
+    """
 
 
 @app.route("/")
@@ -111,7 +165,8 @@ def api_search():
             "amount": r["amount"],
             "txn_no": (r["txn_no"] or "")[-4:] if r["txn_no"] else None,
             "already_checked_in": r["checkin_id"] is not None,
-            "checked_in_at": r["checked_in_at"].strftime("%I:%M %p") if r["checked_in_at"] else None,
+            "checkin_id": r["checkin_id"],
+            "checked_in_at": fmt_ist(r["checked_in_at"]),
             "checked_in_desk": r["desk"],
         })
     for r in walkin_rows:
@@ -127,7 +182,8 @@ def api_search():
             "amount": None,
             "txn_no": None,
             "already_checked_in": True,
-            "checked_in_at": r["checked_in_at"].strftime("%I:%M %p"),
+            "checkin_id": r["id"],
+            "checked_in_at": fmt_ist(r["checked_in_at"]),
             "checked_in_desk": r["desk"],
         })
     return jsonify(results)
@@ -163,21 +219,22 @@ def api_checkin():
         conn.commit()
 
         if row is None:
-            # already checked in by another desk
-            cur.execute("""
-                SELECT checked_in_at, desk FROM checkins WHERE contributor_id = %s
-            """, (contributor_id,))
+            cur.execute("SELECT checked_in_at, desk FROM checkins WHERE contributor_id = %s", (contributor_id,))
             existing = cur.fetchone()
             cur.close(); conn.close()
             return jsonify({
                 "ok": False,
                 "already_checked_in": True,
-                "checked_in_at": existing["checked_in_at"].strftime("%I:%M %p"),
+                "checked_in_at": fmt_ist(existing["checked_in_at"]),
                 "checked_in_desk": existing["desk"],
             })
 
         cur.close(); conn.close()
-        return jsonify({"ok": True, "name": contrib["name"], "checked_in_at": row["checked_in_at"].strftime("%I:%M %p")})
+        return jsonify({
+            "ok": True, "name": contrib["name"],
+            "checkin_id": row["id"],
+            "checked_in_at": fmt_ist(row["checked_in_at"]),
+        })
 
     elif mode == "walkin":
         name = (data.get("name") or "").strip()
@@ -197,10 +254,39 @@ def api_checkin():
         row = cur.fetchone()
         conn.commit()
         cur.close(); conn.close()
-        return jsonify({"ok": True, "name": name, "checked_in_at": row["checked_in_at"].strftime("%I:%M %p")})
+        return jsonify({
+            "ok": True, "name": name,
+            "checkin_id": row["id"],
+            "checked_in_at": fmt_ist(row["checked_in_at"]),
+        })
 
     cur.close(); conn.close()
     return jsonify({"ok": False, "error": "Invalid mode"}), 400
+
+
+@app.route("/api/undo_checkin", methods=["POST"])
+def api_undo_checkin():
+    """Undo a check-in, but only within 10 minutes of it happening (safety window
+    so it can't be used to erase historical attendance records)."""
+    data = request.get_json(force=True)
+    checkin_id = data.get("checkin_id")
+    if not checkin_id:
+        return jsonify({"ok": False, "error": "checkin_id required"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        DELETE FROM checkins
+        WHERE id = %s AND checked_in_at > NOW() - INTERVAL '10 minutes'
+        RETURNING id
+    """, (checkin_id,))
+    row = cur.fetchone()
+    conn.commit()
+    cur.close(); conn.close()
+
+    if row:
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "Too late to undo (10 min window passed) or already removed"}), 400
 
 
 @app.route("/api/stats")
@@ -223,7 +309,7 @@ def api_stats():
     """)
     recent = cur.fetchall()
     for r in recent:
-        r["checked_in_at"] = r["checked_in_at"].strftime("%I:%M %p")
+        r["checked_in_at"] = fmt_ist(r["checked_in_at"])
 
     cur.close(); conn.close()
 
