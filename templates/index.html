@@ -25,7 +25,7 @@
         <button type="button" class="step-btn" onclick="adjustWalkinCount(1)">+</button>
       </div>
     </div>
-    <button onclick="submitWalkin()" style="font-size:18px;padding:16px;background:#374151;">Check In Walk-in</button>
+    <button id="walkinBtn" onclick="submitWalkin()" style="font-size:18px;padding:16px;background:#374151;">Check In Walk-in</button>
   </div>
 </div>
 
@@ -44,6 +44,8 @@
   .big-checkin {
     background:#16a34a; font-size:17px; padding:14px; border-radius:8px; width:auto; flex:1;
   }
+  .big-checkin:disabled { background:#9ca3af; }
+  #undoLink { color:#93c5fd; text-decoration:underline; cursor:pointer; margin-left:10px; }
 </style>
 
 <script>
@@ -62,7 +64,6 @@ searchBox.addEventListener('input', (e) => {
   debounceTimer = setTimeout(() => doSearch(q), 150);
 });
 
-// Enter key = instant check-in if exactly one match
 searchBox.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && lastResults.length === 1 && !lastResults[0].already_checked_in) {
     checkinExisting(lastResults[0].contributor_id, null);
@@ -100,7 +101,7 @@ async function doSearch(q) {
           <span id="count-${i}" style="min-width:24px;text-align:center;font-weight:600;">1</span>
           <button type="button" class="step-btn" onclick="adjustCount(${i}, 1)">+</button>
         </div>
-        <button class="big-checkin" onclick="checkinExisting(${r.contributor_id}, ${i})">Check In</button>
+        <button class="big-checkin" id="btn-${i}" onclick="checkinExisting(${r.contributor_id}, ${i})">Check In</button>
       </div>`}
     </div>
   `).join('');
@@ -114,6 +115,8 @@ function adjustCount(i, delta) {
 
 async function checkinExisting(contributorId, i) {
   const familyCount = i !== null ? document.getElementById(`count-${i}`).textContent : "1";
+  const btn = i !== null ? document.getElementById(`btn-${i}`) : null;
+  if (btn) { if (btn.disabled) return; btn.disabled = true; btn.textContent = 'Checking in...'; }
   const desk = deskInput.value || 'Unknown Desk';
   const res = await fetch('/api/checkin', {
     method: 'POST',
@@ -122,15 +125,17 @@ async function checkinExisting(contributorId, i) {
   });
   const data = await res.json();
   if (data.ok) {
-    showToast(`✓ ${data.name} checked in at ${data.checked_in_at}`);
+    showToastWithUndo(`✓ ${data.name} checked in at ${data.checked_in_at}`, data.checkin_id);
     searchBox.value = '';
     document.getElementById('results').innerHTML = '';
     lastResults = [];
     searchBox.focus();
   } else if (data.already_checked_in) {
     showToast(`Already checked in at ${data.checked_in_at} by ${data.checked_in_desk}`, 3000);
+    if (btn) { btn.disabled = false; btn.textContent = 'Check In'; }
   } else {
     showToast('Error: ' + (data.error || 'unknown'));
+    if (btn) { btn.disabled = false; btn.textContent = 'Check In'; }
   }
 }
 
@@ -144,7 +149,10 @@ async function submitWalkin() {
   const name = document.getElementById('wName').value.trim();
   const phone = document.getElementById('wPhone').value.trim();
   const desk = deskInput.value || 'Unknown Desk';
+  const btn = document.getElementById('walkinBtn');
   if (!name) { showToast('Please enter a name'); return; }
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = 'Checking in...';
 
   const res = await fetch('/api/checkin', {
     method: 'POST',
@@ -152,8 +160,9 @@ async function submitWalkin() {
     body: JSON.stringify({mode: 'walkin', name, phone, village: '', family_count: walkinCount, desk})
   });
   const data = await res.json();
+  btn.disabled = false; btn.textContent = 'Check In Walk-in';
   if (data.ok) {
-    showToast(`✓ ${data.name} checked in at ${data.checked_in_at}`);
+    showToastWithUndo(`✓ ${data.name} checked in at ${data.checked_in_at}`, data.checkin_id);
     document.getElementById('wName').value = '';
     document.getElementById('wPhone').value = '';
     walkinCount = 1;
@@ -162,6 +171,31 @@ async function submitWalkin() {
   } else {
     showToast('Error: ' + (data.error || 'unknown'));
   }
+}
+
+function showToastWithUndo(msg, checkinId) {
+  const t = document.getElementById('toast');
+  t.innerHTML = msg + ` <span id="undoLink" onclick="undoCheckin(${checkinId}, this)">Undo</span>`;
+  t.style.display = 'block';
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => t.style.display = 'none', 8000);
+}
+
+async function undoCheckin(checkinId, el) {
+  el.textContent = 'Undoing...';
+  const res = await fetch('/api/undo_checkin', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({checkin_id: checkinId})
+  });
+  const data = await res.json();
+  const t = document.getElementById('toast');
+  if (data.ok) {
+    t.textContent = 'Undone.';
+  } else {
+    t.textContent = 'Could not undo: ' + (data.error || 'unknown');
+  }
+  setTimeout(() => t.style.display = 'none', 2500);
 }
 </script>
 {% endblock %}
