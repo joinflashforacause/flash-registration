@@ -2,6 +2,12 @@
 {% block nav %}<a href="/">Desk View →</a>{% endblock %}
 {% block content %}
 
+<div class="card">
+  <input id="checkSearch" placeholder="Search a name or phone to confirm arrival..." autocomplete="off"
+         style="font-size:18px;padding:14px;margin-bottom:8px;" />
+  <div id="checkResults"></div>
+</div>
+
 <div class="stat-grid">
   <div class="stat-box"><div class="stat-num" id="statPeople">0</div><div class="stat-label">Total People</div></div>
   <div class="stat-box"><div class="stat-num" id="statContrib">0</div><div class="stat-label">Contributors</div></div>
@@ -13,7 +19,46 @@
   <div id="feed" style="margin-top:10px;"></div>
 </div>
 
+<style>
+  .confirm-card { border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; }
+  .confirm-name { font-weight:700; font-size:16px; }
+  .confirm-sub { font-size:12.5px; color:#6b7280; margin-top:2px; }
+  .status-yes { background:#dcfce7; color:#166534; padding:6px 12px; border-radius:8px; font-size:13px; font-weight:600; white-space:nowrap; }
+  .status-no { background:#fee2e2; color:#991b1b; padding:6px 12px; border-radius:8px; font-size:13px; font-weight:600; white-space:nowrap; }
+</style>
+
 <script>
+let debounceTimer2;
+document.getElementById('checkSearch').addEventListener('input', (e) => {
+  clearTimeout(debounceTimer2);
+  const q = e.target.value.trim();
+  if (q.length < 2) { document.getElementById('checkResults').innerHTML = ''; return; }
+  debounceTimer2 = setTimeout(() => doCheckSearch(q), 200);
+});
+
+async function doCheckSearch(q) {
+  const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+  const data = await res.json();
+  const box = document.getElementById('checkResults');
+  if (data.length === 0) {
+    box.innerHTML = '<p style="color:#6b7280;font-size:14px;">No matching contributor found.</p>';
+    return;
+  }
+  box.innerHTML = data.map(r => `
+    <div class="confirm-card">
+      <div>
+        <div class="confirm-name">${r.name}</div>
+        <div class="confirm-sub">
+          ${r.amb_id || ''} ${r.phone ? '· ' + r.phone : ''} ${r.amount ? '· ₹' + r.amount : ''}
+        </div>
+      </div>
+      ${r.already_checked_in
+        ? `<span class="status-yes">✓ Arrived ${r.checked_in_at}</span>`
+        : `<span class="status-no">Not yet</span>`}
+    </div>
+  `).join('');
+}
+
 async function refresh() {
   const res = await fetch('/api/stats');
   const d = await res.json();
