@@ -47,7 +47,7 @@ async function doCheckSearch(q) {
   box.innerHTML = data.map(r => `
     <div class="confirm-card">
       <div>
-        <div class="confirm-name">${r.name}</div>
+        <div class="confirm-name">${r.name} <span class="chip" style="background:${r.source === 'walkin' ? '#fef3c7' : '#e0f2fe'};font-size:11px;">${r.source === 'walkin' ? 'walk-in' : 'contributor'}</span></div>
         <div class="confirm-sub">
           ${r.amb_id || ''} ${r.phone ? '· ' + r.phone : ''} ${r.amount ? '· ₹' + r.amount : ''}
         </div>
