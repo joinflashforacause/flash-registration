@@ -91,6 +91,7 @@ async function doSearch(q) {
             ${r.amount ? `<span class="chip">₹${r.amount}</span>` : ''}
             ${r.txn_no ? `<span class="chip">txn ..${r.txn_no}</span>` : ''}
           </div>
+          ${r.source === 'contributor' ? colorPickerHtml(r, i) : ''}
         </div>
         ${r.already_checked_in ? `<span class="badge">✓ ${r.checked_in_at}<br>${r.checked_in_desk}</span>` : ''}
       </div>
@@ -105,6 +106,46 @@ async function doSearch(q) {
       </div>`}
     </div>
   `).join('');
+}
+
+const COLOR_HEX = { green: '#16a34a', yellow: '#eab308', red: '#dc2626', blue: '#2563eb' };
+
+function colorPickerHtml(r, i) {
+  if (r.color_band) {
+    return `<div style="margin-top:6px;">
+      <span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;">
+        <span style="width:14px;height:14px;border-radius:50%;background:${COLOR_HEX[r.color_band]};display:inline-block;"></span>
+        ${r.color_band.charAt(0).toUpperCase() + r.color_band.slice(1)} band
+        <span style="color:#93c5fd;text-decoration:underline;cursor:pointer;" onclick="showColorPicker(${i})">change</span>
+      </span>
+      <div id="colorpicker-${i}" style="display:none;margin-top:6px;">${colorDots(r.contributor_id, i)}</div>
+    </div>`;
+  }
+  return `<div style="margin-top:6px;font-size:12.5px;color:#6b7280;">
+    Assign band: ${colorDots(r.contributor_id, i)}
+  </div>`;
+}
+
+function colorDots(contributorId, i) {
+  return Object.keys(COLOR_HEX).map(c => `
+    <span onclick="assignColor(${contributorId}, '${c}', ${i})"
+          style="display:inline-block;width:22px;height:22px;border-radius:50%;background:${COLOR_HEX[c]};
+                 margin-right:6px;cursor:pointer;border:2px solid white;box-shadow:0 0 0 1px #d1d5db;"></span>
+  `).join('');
+}
+
+function showColorPicker(i) {
+  document.getElementById(`colorpicker-${i}`).style.display = 'block';
+}
+
+async function assignColor(contributorId, color, i) {
+  await fetch('/api/set_color', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({contributor_id: contributorId, color})
+  });
+  if (lastResults[i]) lastResults[i].color_band = color;
+  doSearch(searchBox.value.trim());
 }
 
 function adjustCount(i, delta) {
