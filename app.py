@@ -11,6 +11,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "flash-dev-secret-change-me")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 REGISTRATION_PIN = os.environ.get("REGISTRATION_PIN", "")  # set this on Render
 IST = ZoneInfo("Asia/Kolkata")
+ALLOWED_COLORS = {"green", "yellow", "red", "blue"}
 
 
 def get_conn():
@@ -39,7 +40,8 @@ def init_db():
             photo_url TEXT,
             txn_date TEXT,
             amount TEXT,
-            txn_no TEXT
+            txn_no TEXT,
+            color_band TEXT
         );
     """)
     cur.execute("""
@@ -59,7 +61,7 @@ def init_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_contrib_phone ON contributors (phone);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_contrib_name ON contributors (LOWER(name));")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_checkin_phone ON checkins (phone);")
-    for col, coltype in [("txn_date", "TEXT"), ("amount", "TEXT"), ("txn_no", "TEXT")]:
+    for col, coltype in [("txn_date", "TEXT"), ("amount", "TEXT"), ("txn_no", "TEXT"), ("color_band", "TEXT")]:
         cur.execute(f"ALTER TABLE contributors ADD COLUMN IF NOT EXISTS {col} {coltype};")
     # Migrate checked_in_at to TIMESTAMPTZ if it was created earlier as plain TIMESTAMP
     try:
@@ -129,7 +131,7 @@ def api_search():
 
     cur.execute("""
         SELECT c.id, c.amb_id, c.name, c.phone, c.village, c.photo_url,
-               c.txn_date, c.amount, c.txn_no,
+               c.txn_date, c.amount, c.txn_no, c.color_band,
                ci.id AS checkin_id, ci.checked_in_at, ci.desk
         FROM contributors c
         LEFT JOIN checkins ci ON ci.contributor_id = c.id
@@ -164,6 +166,7 @@ def api_search():
             "txn_date": r["txn_date"],
             "amount": r["amount"],
             "txn_no": (r["txn_no"] or "")[-4:] if r["txn_no"] else None,
+            "color_band": r["color_band"],
             "already_checked_in": r["checkin_id"] is not None,
             "checkin_id": r["checkin_id"],
             "checked_in_at": fmt_ist(r["checked_in_at"]),
@@ -264,6 +267,22 @@ def api_checkin():
     return jsonify({"ok": False, "error": "Invalid mode"}), 400
 
 
+@app.route("/api/set_color", methods=["POST"])
+def api_set_color():
+    data = request.get_json(force=True)
+    contributor_id = data.get("contributor_id")
+    color = (data.get("color") or "").strip().lower()
+    if color not in ALLOWED_COLORS:
+        return jsonify({"ok": False, "error": "Invalid color"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("UPDATE contributors SET color_band = %s WHERE id = %s", (color, contributor_id))
+    conn.commit()
+    cur.close(); conn.close()
+    return jsonify({"ok": True, "color": color})
+
+
 @app.route("/api/undo_checkin", methods=["POST"])
 def api_undo_checkin():
     """Undo a check-in, but only within 10 minutes of it happening (safety window
@@ -287,6 +306,44 @@ def api_undo_checkin():
     if row:
         return jsonify({"ok": True})
     return jsonify({"ok": False, "error": "Too late to undo (10 min window passed) or already removed"}), 400
+
+
+@app.route("/api/export")
+def api_export():
+    import csv
+    import io
+
+    conn = get_conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT amb_id, name, phone, village, family_count, is_walkin, desk, checked_in_at
+        FROM checkins
+        ORDER BY checked_in_at ASC
+    """)
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["AMB ID", "Name", "Phone", "Village", "People Count", "Type", "Desk", "Checked In At (IST)"])
+    for r in rows:
+        writer.writerow([
+            r["amb_id"] or "",
+            r["name"],
+            r["phone"] or "",
+            r["village"] or "",
+            r["family_count"],
+            "Walk-in" if r["is_walkin"] else "Contributor",
+            r["desk"] or "",
+            r["checked_in_at"].astimezone(IST).strftime("%Y-%m-%d %I:%M %p") if r["checked_in_at"] else "",
+        ])
+
+    from flask import Response
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=smaranotsavam_checkins.csv"}
+    )
 
 
 @app.route("/api/stats")
