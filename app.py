@@ -249,10 +249,28 @@ def api_checkin():
         family_count = int(data.get("family_count") or 1)
         color = (data.get("color") or "").strip().lower()
         color = color if color in ALLOWED_COLORS else None
+        confirm_dup = bool(data.get("confirm"))
 
         if not name:
             cur.close(); conn.close()
             return jsonify({"ok": False, "error": "Name is required"}), 400
+
+        if not confirm_dup and phone:
+            cur.execute("""
+                SELECT id, name, desk, checked_in_at FROM checkins
+                WHERE is_walkin = TRUE AND phone = %s AND LOWER(name) = LOWER(%s)
+                ORDER BY checked_in_at DESC LIMIT 1
+            """, (phone, name))
+            existing = cur.fetchone()
+            if existing:
+                cur.close(); conn.close()
+                return jsonify({
+                    "ok": False,
+                    "possible_duplicate": True,
+                    "existing_name": existing["name"],
+                    "existing_desk": existing["desk"],
+                    "existing_at": fmt_ist(existing["checked_in_at"]),
+                })
 
         cur.execute("""
             INSERT INTO checkins (contributor_id, name, phone, amb_id, is_walkin, village, family_count, desk, color_band)
