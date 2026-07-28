@@ -55,6 +55,7 @@ def init_db():
             village TEXT,
             family_count INTEGER DEFAULT 1,
             desk TEXT,
+            color_band TEXT,
             checked_in_at TIMESTAMPTZ DEFAULT NOW()
         );
     """)
@@ -63,6 +64,7 @@ def init_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_checkin_phone ON checkins (phone);")
     for col, coltype in [("txn_date", "TEXT"), ("amount", "TEXT"), ("txn_no", "TEXT"), ("color_band", "TEXT")]:
         cur.execute(f"ALTER TABLE contributors ADD COLUMN IF NOT EXISTS {col} {coltype};")
+    cur.execute("ALTER TABLE checkins ADD COLUMN IF NOT EXISTS color_band TEXT;")
     # Migrate checked_in_at to TIMESTAMPTZ if it was created earlier as plain TIMESTAMP
     try:
         cur.execute("""
@@ -142,7 +144,7 @@ def api_search():
     contrib_rows = cur.fetchall()
 
     cur.execute("""
-        SELECT id, name, phone, family_count, desk, checked_in_at
+        SELECT id, name, phone, family_count, desk, checked_in_at, color_band
         FROM checkins
         WHERE is_walkin = TRUE AND (phone ILIKE %s OR name ILIKE %s)
         ORDER BY checked_in_at DESC
@@ -184,6 +186,7 @@ def api_search():
             "txn_date": None,
             "amount": None,
             "txn_no": None,
+            "color_band": r["color_band"],
             "already_checked_in": True,
             "checkin_id": r["id"],
             "checked_in_at": fmt_ist(r["checked_in_at"]),
@@ -244,16 +247,18 @@ def api_checkin():
         phone = (data.get("phone") or "").strip()
         village = (data.get("village") or "").strip()
         family_count = int(data.get("family_count") or 1)
+        color = (data.get("color") or "").strip().lower()
+        color = color if color in ALLOWED_COLORS else None
 
         if not name:
             cur.close(); conn.close()
             return jsonify({"ok": False, "error": "Name is required"}), 400
 
         cur.execute("""
-            INSERT INTO checkins (contributor_id, name, phone, amb_id, is_walkin, village, family_count, desk)
-            VALUES (NULL, %s, %s, NULL, TRUE, %s, %s, %s)
+            INSERT INTO checkins (contributor_id, name, phone, amb_id, is_walkin, village, family_count, desk, color_band)
+            VALUES (NULL, %s, %s, NULL, TRUE, %s, %s, %s, %s)
             RETURNING id, checked_in_at
-        """, (name, phone, village, family_count, desk))
+        """, (name, phone, village, family_count, desk, color))
         row = cur.fetchone()
         conn.commit()
         cur.close(); conn.close()
@@ -265,6 +270,48 @@ def api_checkin():
 
     cur.close(); conn.close()
     return jsonify({"ok": False, "error": "Invalid mode"}), 400
+
+
+@app.route("/api/color_stats")
+def api_color_stats():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT color, COUNT(*) FROM (
+            SELECT ct.color_band AS color
+            FROM checkins ci JOIN contributors ct ON ci.contributor_id = ct.id
+            WHERE ci.is_walkin = FALSE
+            UNION ALL
+            SELECT color_band AS color FROM checkins WHERE is_walkin = TRUE
+        ) t
+        GROUP BY color
+    """)
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+
+    counts = {"green": 0, "yellow": 0, "red": 0, "blue": 0, "unassigned": 0}
+    for color, c in rows:
+        if color in counts:
+            counts[color] = c
+        else:
+            counts["unassigned"] += c
+    return jsonify(counts)
+
+
+@app.route("/api/set_checkin_color", methods=["POST"])
+def api_set_checkin_color():
+    data = request.get_json(force=True)
+    checkin_id = data.get("checkin_id")
+    color = (data.get("color") or "").strip().lower()
+    if color not in ALLOWED_COLORS:
+        return jsonify({"ok": False, "error": "Invalid color"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("UPDATE checkins SET color_band = %s WHERE id = %s AND is_walkin = TRUE", (color, checkin_id))
+    conn.commit()
+    cur.close(); conn.close()
+    return jsonify({"ok": True, "color": color})
 
 
 @app.route("/api/set_color", methods=["POST"])
