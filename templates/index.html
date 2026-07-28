@@ -248,7 +248,7 @@ function selectWalkinColor(c) {
 }
 renderWalkinColorDots();
 
-async function submitWalkin() {
+async function submitWalkin(forceConfirm) {
   const name = document.getElementById('wName').value.trim();
   const phone = document.getElementById('wPhone').value.trim();
   const desk = deskInput.value || 'Unknown Desk';
@@ -260,10 +260,21 @@ async function submitWalkin() {
   const res = await fetch('/api/checkin', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({mode: 'walkin', name, phone, village: '', family_count: walkinCount, desk, color: selectedWalkinColor})
+    body: JSON.stringify({mode: 'walkin', name, phone, village: '', family_count: walkinCount, desk, color: selectedWalkinColor, confirm: !!forceConfirm})
   });
   const data = await res.json();
   btn.disabled = false; btn.textContent = 'Check In Walk-in';
+
+  if (data.possible_duplicate) {
+    const proceed = confirm(
+      `"${data.existing_name}" was already added as a walk-in at ${data.existing_at} (${data.existing_desk}).\n\nAdd this as a separate person anyway?`
+    );
+    if (proceed) {
+      submitWalkin(true);
+    }
+    return;
+  }
+
   if (data.ok) {
     showToastWithUndo(`✓ ${data.name} checked in at ${data.checked_in_at}`, data.checkin_id);
     refreshColorStats();
