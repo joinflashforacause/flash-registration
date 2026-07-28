@@ -32,6 +32,7 @@ COLUMN_MAP_HINTS = {
     "txn_date": ["date"],
     "amount": ["amount"],
     "txn_no": ["transaction no", "txn no", "transaction number"],
+    "color_band": ["color", "colour", "band"],
 }
 
 
@@ -67,6 +68,7 @@ def main():
     col_date = guess_column(df.columns, COLUMN_MAP_HINTS["txn_date"])
     col_amount = guess_column(df.columns, COLUMN_MAP_HINTS["amount"])
     col_txnno = guess_column(df.columns, COLUMN_MAP_HINTS["txn_no"])
+    col_color = guess_column(df.columns, COLUMN_MAP_HINTS["color_band"])
 
     print("Detected columns:")
     print(f"  AMB ID  -> {col_amb}")
@@ -77,6 +79,7 @@ def main():
     print(f"  Date    -> {col_date}")
     print(f"  Amount  -> {col_amount}")
     print(f"  Txn No  -> {col_txnno}")
+    print(f"  Color   -> {col_color}")
 
     if not col_amb:
         print("ERROR: could not detect a Unique/AMB ID column. Aborting.")
@@ -108,6 +111,7 @@ def main():
         txn_date = str(row.get(col_date, "")).strip() if col_date else None
         amount = str(row.get(col_amount, "")).strip() if col_amount else None
         txn_no = str(row.get(col_txnno, "")).strip() if col_txnno else None
+        color_band = str(row.get(col_color, "")).strip().lower() if col_color else None
 
         phone = None if phone in (None, "", "nan") else phone
         village = None if village in (None, "", "nan") else village
@@ -115,10 +119,11 @@ def main():
         txn_date = None if txn_date in (None, "", "nan") else txn_date.split(" ")[0]
         amount = None if amount in (None, "", "nan") else amount
         txn_no = None if txn_no in (None, "", "nan") else txn_no
+        color_band = color_band if color_band in ("green", "yellow", "red", "blue") else None
 
         cur.execute("""
-            INSERT INTO contributors (amb_id, name, phone, village, photo_url, txn_date, amount, txn_no)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO contributors (amb_id, name, phone, village, photo_url, txn_date, amount, txn_no, color_band)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (amb_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 phone = EXCLUDED.phone,
@@ -126,8 +131,9 @@ def main():
                 photo_url = EXCLUDED.photo_url,
                 txn_date = EXCLUDED.txn_date,
                 amount = EXCLUDED.amount,
-                txn_no = EXCLUDED.txn_no
-        """, (amb_id, name, phone, village, photo_url, txn_date, amount, txn_no))
+                txn_no = EXCLUDED.txn_no,
+                color_band = COALESCE(EXCLUDED.color_band, contributors.color_band)
+        """, (amb_id, name, phone, village, photo_url, txn_date, amount, txn_no, color_band))
         inserted += 1
 
     conn.commit()
