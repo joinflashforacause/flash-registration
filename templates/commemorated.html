@@ -17,11 +17,46 @@
   <div id="cResults"></div>
 </div>
 
+<div class="card">
+  <strong>Recently Visited</strong>
+  <div id="recentFeed" style="margin-top:10px;"></div>
+</div>
+
 <style>
   .commem-card { border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:8px; }
   .commem-name { font-weight:600; font-size:15px; }
   .commem-sub { font-size:12.5px; color:#6b7280; margin-top:2px; }
+  .feed-item { padding: 10px 0; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; }
+  .feed-item:last-child { border-bottom: none; }
 </style>
+
+<script>
+const FEED_COLOR_HEX = { green: '#16a34a', yellow: '#ca8a04', red: '#dc2626', blue: '#2563eb' };
+
+async function refreshRecent() {
+  const res = await fetch('/api/commemorated_recent');
+  const rows = await res.json();
+  const box = document.getElementById('recentFeed');
+  if (rows.length === 0) {
+    box.innerHTML = '<p style="color:#6b7280;font-size:14px;">No one has been marked yet.</p>';
+    return;
+  }
+  box.innerHTML = rows.map(r => `
+    <div class="feed-item">
+      <div>
+        <strong>#${r.sl_no} — ${r.commemorated_name}</strong>
+        <div class="result-sub" style="color:${FEED_COLOR_HEX[r.color_band] || '#6b7280'};">
+          Visited by ${r.visitor_name}${r.visitor_phone ? ' (' + r.visitor_phone + ')' : ''}
+        </div>
+        <div class="result-sub">${r.desk || ''}</div>
+      </div>
+      <div class="result-sub">${r.checked_in_at}</div>
+    </div>
+  `).join('');
+}
+refreshRecent();
+setInterval(refreshRecent, 6000);
+</script>
 
 <script>
 let cDebounce;
