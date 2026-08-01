@@ -124,25 +124,36 @@ async function checkinExisting(contributorId, i) {
   const btn = i !== null ? document.getElementById(`btn-${i}`) : null;
   if (btn) { if (btn.disabled) return; btn.disabled = true; btn.textContent = 'Checking in...'; }
   const desk = deskInput.value || 'Unknown Desk';
-  const res = await fetch('/api/checkin', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({mode: 'existing', contributor_id: contributorId, desk, commemorated_id: selectedCommemId})
-  });
-  const data = await res.json();
-  if (data.ok) {
-    showToastWithUndo(`✓ ${data.name} checked in at ${data.checked_in_at} — ${data.color_band.toUpperCase()} band`, data.checkin_id);
-    refreshColorStats();
-    clearCommem();
-    searchBox.value = '';
-    document.getElementById('results').innerHTML = '';
-    lastResults = [];
-    searchBox.focus();
-  } else if (data.already_checked_in) {
-    showToast(`Already checked in at ${data.checked_in_at} by ${data.checked_in_desk} (${data.color_band || 'no'} band)`, 3500);
-    if (btn) { btn.disabled = false; btn.textContent = 'Check In'; }
-  } else {
-    showToast('Error: ' + (data.error || 'unknown'));
+  try {
+    const res = await fetch('/api/checkin', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mode: 'existing', contributor_id: contributorId, desk, commemorated_id: selectedCommemId})
+    });
+    if (!res.ok) {
+      let msg = 'Server error (' + res.status + ')';
+      try { const errData = await res.json(); msg = errData.error || msg; } catch(e) {}
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    if (data.ok) {
+      const bandLabel = data.color_band ? ' — ' + data.color_band.toUpperCase() + ' band' : '';
+      showToastWithUndo(`✓ ${data.name} checked in at ${data.checked_in_at}${bandLabel}`, data.checkin_id);
+      refreshColorStats();
+      clearCommem();
+      searchBox.value = '';
+      document.getElementById('results').innerHTML = '';
+      lastResults = [];
+      searchBox.focus();
+    } else if (data.already_checked_in) {
+      showToast(`Already checked in at ${data.checked_in_at} by ${data.checked_in_desk} (${data.color_band || 'no'} band)`, 3500);
+      if (btn) { btn.disabled = false; btn.textContent = 'Check In'; }
+    } else {
+      showToast('Error: ' + (data.error || 'unknown'));
+      if (btn) { btn.disabled = false; btn.textContent = 'Check In'; }
+    }
+  } catch (err) {
+    showToast('Check-in failed: ' + err.message, 4000);
     if (btn) { btn.disabled = false; btn.textContent = 'Check In'; }
   }
 }
@@ -167,32 +178,43 @@ async function submitWalkin(forceConfirm) {
   if (btn.disabled) return;
   btn.disabled = true; btn.textContent = 'Checking in...';
 
-  const res = await fetch('/api/checkin', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({mode: 'walkin', name, phone, village, desk, confirm: !!forceConfirm, commemorated_id: selectedCommemId})
-  });
-  const data = await res.json();
-  btn.disabled = false; btn.textContent = 'Check In Walk-in';
+  try {
+    const res = await fetch('/api/checkin', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mode: 'walkin', name, phone, village, desk, confirm: !!forceConfirm, commemorated_id: selectedCommemId})
+    });
+    if (!res.ok) {
+      let msg = 'Server error (' + res.status + ')';
+      try { const errData = await res.json(); msg = errData.error || msg; } catch(e) {}
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    btn.disabled = false; btn.textContent = 'Check In Walk-in';
 
-  if (data.possible_duplicate) {
-    const proceed = confirm(
-      `"${data.existing_name}" was already added as a walk-in at ${data.existing_at} (${data.existing_desk}).\n\nAdd this as a separate person anyway?`
-    );
-    if (proceed) { submitWalkin(true); }
-    return;
-  }
+    if (data.possible_duplicate) {
+      const proceed = confirm(
+        `"${data.existing_name}" was already added as a walk-in at ${data.existing_at} (${data.existing_desk}).\n\nAdd this as a separate person anyway?`
+      );
+      if (proceed) { submitWalkin(true); }
+      return;
+    }
 
-  if (data.ok) {
-    showToastWithUndo(`✓ ${data.name} checked in at ${data.checked_in_at} — ${data.color_band.toUpperCase()} band`, data.checkin_id);
-    refreshColorStats();
-    clearCommem();
-    document.getElementById('wName').value = '';
-    document.getElementById('wPhone').value = '';
-    document.getElementById('wAreaOther').value = '';
-    searchBox.focus();
-  } else {
-    showToast('Error: ' + (data.error || 'unknown'));
+    if (data.ok) {
+      const bandLabel = data.color_band ? ' — ' + data.color_band.toUpperCase() + ' band' : '';
+      showToastWithUndo(`✓ ${data.name} checked in at ${data.checked_in_at}${bandLabel}`, data.checkin_id);
+      refreshColorStats();
+      clearCommem();
+      document.getElementById('wName').value = '';
+      document.getElementById('wPhone').value = '';
+      document.getElementById('wAreaOther').value = '';
+      searchBox.focus();
+    } else {
+      showToast('Error: ' + (data.error || 'unknown'));
+    }
+  } catch (err) {
+    btn.disabled = false; btn.textContent = 'Check In Walk-in';
+    showToast('Check-in failed: ' + err.message, 4000);
   }
 }
 
