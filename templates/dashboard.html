@@ -1,11 +1,17 @@
 {% extends "base.html" %}
-{% block nav %}<a href="/">Desk View →</a>{% endblock %}
+{% block nav %}<a href="/">Desk View</a> · <a href="/commemorated">Commemorated</a>{% endblock %}
 {% block content %}
 
 <div class="card">
   <input id="checkSearch" placeholder="Search a name or phone to confirm arrival..." autocomplete="off"
          style="font-size:18px;padding:14px;margin-bottom:8px;" />
   <div id="checkResults"></div>
+</div>
+
+<div class="card">
+  <a href="/api/export" style="text-decoration:none;">
+    <button style="background:#374151;">⬇ Download Full Visitor List (CSV)</button>
+  </a>
 </div>
 
 <div class="stat-grid">
