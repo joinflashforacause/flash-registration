@@ -30,8 +30,9 @@ def fmt_ist(dt):
 
 
 def next_band_color(cur):
-    cur.execute("SELECT nextval('band_seq')")
-    n = cur.fetchone()[0]
+    cur.execute("SELECT nextval('band_seq') AS n")
+    row = cur.fetchone()
+    n = row["n"] if isinstance(row, dict) else row[0]
     idx = (n - 1) % (BAND_SIZE * len(BAND_ORDER))
     band_index = idx // BAND_SIZE
     return BAND_ORDER[band_index]
