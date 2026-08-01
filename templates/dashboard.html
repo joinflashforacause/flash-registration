@@ -65,6 +65,8 @@ async function doCheckSearch(q) {
   `).join('');
 }
 
+const FEED_COLOR_HEX = { green: '#16a34a', yellow: '#ca8a04', red: '#dc2626', blue: '#2563eb' };
+
 async function refresh() {
   const res = await fetch('/api/stats');
   const d = await res.json();
@@ -75,8 +77,8 @@ async function refresh() {
   document.getElementById('feed').innerHTML = d.recent.map(r => `
     <div class="feed-item">
       <div>
-        <strong>${r.name}</strong> ${r.is_walkin ? '<span class="badge warn">walk-in</span>' : ''}
-        <div class="result-sub">${r.desk || ''} ${r.color_band ? '· ' + r.color_band.toUpperCase() + ' band' : ''}</div>
+        <strong style="color:${FEED_COLOR_HEX[r.color_band] || '#111827'};">${r.name}</strong> ${r.is_walkin ? '<span class="badge warn">walk-in</span>' : ''}
+        <div class="result-sub">${r.desk || ''}</div>
         ${r.commemorated_name ? `<div class="result-sub">🕯️ Commemorating: ${r.commemorated_name}</div>` : ''}
       </div>
       <div class="result-sub">${r.checked_in_at}</div>
