@@ -7,6 +7,10 @@
   <div style="font-size:28px;font-weight:700;color:#7c3aed;" id="commemTotal">0 / 543</div>
 </div>
 
+<div class="card" style="padding:12px 16px;font-size:13px;color:#6b7280;">
+  This tab is read-only status. To link a visitor to a commemorated person, use the "Commemorating someone?" picker on the Desk View before checking them in.
+</div>
+
 <div class="card">
   <input id="cSearch" placeholder="Search commemorated person's name or number..." autocomplete="off"
          autofocus style="font-size:18px;padding:14px;margin-bottom:8px;" />
@@ -14,13 +18,12 @@
 </div>
 
 <style>
-  .commem-card { border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; }
+  .commem-card { border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:8px; }
   .commem-name { font-weight:600; font-size:15px; }
   .commem-sub { font-size:12.5px; color:#6b7280; margin-top:2px; }
 </style>
 
 <script>
-const deskName = localStorage.getItem('flash_desk') || 'Unknown Desk';
 let cDebounce;
 const cSearch = document.getElementById('cSearch');
 cSearch.addEventListener('input', (e) => {
@@ -40,35 +43,12 @@ async function doSearch(q) {
   }
   box.innerHTML = data.map(r => `
     <div class="commem-card">
-      <div>
-        <div class="commem-name">#${r.sl_no} — ${r.name}</div>
-        ${r.already_checked_in ? `<div class="commem-sub">✓ Visited at ${r.checked_in_at} (${r.checked_in_desk})</div>` : `<div class="commem-sub">Not yet visited</div>`}
-      </div>
+      <div class="commem-name">#${r.sl_no} — ${r.name}</div>
       ${r.already_checked_in
-        ? `<span class="badge">✓ Done</span>`
-        : `<button style="width:auto;padding:10px 16px;font-size:14px;background:#7c3aed;" onclick="checkin(${r.commemorated_id}, this)">Mark Visited</button>`}
+        ? r.visitors.map(v => `<div class="commem-sub">✓ Visited by ${v.name}${v.phone ? ' (' + v.phone + ')' : ''} at ${v.at} — ${v.desk}</div>`).join('')
+        : `<div class="commem-sub">Not yet visited</div>`}
     </div>
   `).join('');
-}
-
-async function checkin(commemId, btn) {
-  btn.disabled = true;
-  btn.textContent = 'Marking...';
-  const res = await fetch('/api/checkin_commemorated', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({commemorated_id: commemId, visitor_name: '', visitor_phone: '', desk: deskName})
-  });
-  const data = await res.json();
-  if (data.ok) {
-    showToast('Marked as visited.');
-  } else if (data.already_checked_in) {
-    showToast('Already marked visited.');
-  } else {
-    showToast('Error marking visited');
-  }
-  doSearch(cSearch.value.trim());
-  refreshTotal();
 }
 
 async function refreshTotal() {
