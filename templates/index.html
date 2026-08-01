@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block nav %}<a href="/dashboard">Live View</a> · <a href="/commemorated">Commemorated</a>{% endblock %}
+{% block nav %}<a href="/commemorated">Commemorated</a> · <a href="/dashboard">Live View</a>{% endblock %}
 {% block content %}
 
 <div class="card" style="padding:10px 16px;">
@@ -10,18 +10,6 @@
 <div class="card" style="padding:12px 16px;">
   <div style="font-size:12px;color:#6b7280;margin-bottom:8px;">Bands given out (auto-assigned, 170 each, cycles)</div>
   <div id="colorStatsBar" style="display:flex;gap:10px;flex-wrap:wrap;"></div>
-</div>
-
-<div class="card">
-  <strong style="font-size:14px;">🕯️ Commemorating someone? (optional — applies to next check-in)</strong>
-  <div style="margin-top:8px;" id="commemPickerArea">
-    <input id="commemSearch" placeholder="Search commemorated person's name..." autocomplete="off" style="font-size:16px;padding:12px;" />
-    <div id="commemResults"></div>
-  </div>
-  <div id="commemSelected" style="display:none;margin-top:8px;padding:10px;background:#f5f3ff;border-radius:8px;">
-    <span style="font-size:14px;">Commemorating: <strong id="commemSelectedName"></strong></span>
-    <span onclick="clearCommem()" style="color:#7c3aed;text-decoration:underline;cursor:pointer;margin-left:10px;font-size:13px;">clear</span>
-  </div>
 </div>
 
 <div class="card">
@@ -43,7 +31,20 @@
               style="width:auto;display:inline-block;padding:8px 16px;font-size:14px;background:#e5e7eb;color:#111827;border-radius:6px;">Other</button>
       <input id="wAreaOther" placeholder="Type area name" style="display:none;margin-top:8px;font-size:16px;padding:10px;" />
     </div>
-    <button id="walkinBtn" onclick="submitWalkin()" style="font-size:18px;padding:16px;background:#374151;margin-top:10px;">Check In Walk-in</button>
+
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid #f0f0f0;">
+      <strong style="font-size:14px;">🕯️ Commemorating someone? (optional)</strong>
+      <div style="margin-top:8px;" id="commemPickerArea">
+        <input id="commemSearch" placeholder="Search commemorated person's name..." autocomplete="off" style="font-size:16px;padding:12px;" />
+        <div id="commemResults"></div>
+      </div>
+      <div id="commemSelected" style="display:none;margin-top:8px;padding:10px;background:#f5f3ff;border-radius:8px;">
+        <span style="font-size:14px;">Commemorating: <strong id="commemSelectedName"></strong></span>
+        <span onclick="clearCommem()" style="color:#7c3aed;text-decoration:underline;cursor:pointer;margin-left:10px;font-size:13px;">clear</span>
+      </div>
+    </div>
+
+    <button id="walkinBtn" onclick="submitWalkin()" style="font-size:18px;padding:16px;background:#374151;margin-top:14px;">Check In Walk-in</button>
   </div>
 </div>
 
