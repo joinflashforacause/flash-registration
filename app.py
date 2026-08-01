@@ -1,4 +1,5 @@
 import os
+import csv
 import datetime
 from zoneinfo import ZoneInfo
 import psycopg2
@@ -9,14 +10,15 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "flash-dev-secret-change-me")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
-REGISTRATION_PIN = os.environ.get("REGISTRATION_PIN", "")  # set this on Render
+REGISTRATION_PIN = os.environ.get("REGISTRATION_PIN", "")
 IST = ZoneInfo("Asia/Kolkata")
 ALLOWED_COLORS = {"green", "yellow", "red", "blue"}
+BAND_ORDER = ["green", "yellow", "red", "blue"]
+BAND_SIZE = 170
 
 
 def get_conn():
-    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-    return conn
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
 def fmt_ist(dt):
@@ -25,6 +27,16 @@ def fmt_ist(dt):
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=datetime.timezone.utc)
     return dt.astimezone(IST).strftime("%I:%M %p")
+
+
+def next_band_color(cur):
+    """Atomically get the next sequence number and map it to a color band.
+    Cycles green -> yellow -> red -> blue -> green ... every 170 check-ins."""
+    cur.execute("SELECT nextval('band_seq')")
+    n = cur.fetchone()[0]
+    idx = (n - 1) % (BAND_SIZE * len(BAND_ORDER))
+    band_index = idx // BAND_SIZE
+    return BAND_ORDER[band_index]
 
 
 def init_db():
@@ -65,7 +77,6 @@ def init_db():
     for col, coltype in [("txn_date", "TEXT"), ("amount", "TEXT"), ("txn_no", "TEXT"), ("color_band", "TEXT")]:
         cur.execute(f"ALTER TABLE contributors ADD COLUMN IF NOT EXISTS {col} {coltype};")
     cur.execute("ALTER TABLE checkins ADD COLUMN IF NOT EXISTS color_band TEXT;")
-    # Migrate checked_in_at to TIMESTAMPTZ if it was created earlier as plain TIMESTAMP
     try:
         cur.execute("""
             ALTER TABLE checkins
@@ -74,7 +85,45 @@ def init_db():
         """)
     except Exception:
         conn.rollback()
+
+    cur.execute("CREATE SEQUENCE IF NOT EXISTS band_seq START 1;")
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS commemorated_persons (
+            id SERIAL PRIMARY KEY,
+            sl_no INTEGER UNIQUE,
+            name TEXT NOT NULL
+        );
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS commemorated_checkins (
+            id SERIAL PRIMARY KEY,
+            commemorated_id INTEGER UNIQUE REFERENCES commemorated_persons(id),
+            visitor_name TEXT,
+            visitor_phone TEXT,
+            desk TEXT,
+            checked_in_at TIMESTAMPTZ DEFAULT NOW()
+        );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_commem_name ON commemorated_persons (LOWER(name));")
+
     conn.commit()
+
+    # Seed commemorated_persons from bundled CSV, only if table is empty
+    cur.execute("SELECT COUNT(*) FROM commemorated_persons")
+    count = cur.fetchone()[0]
+    if count == 0:
+        csv_path = os.path.join(os.path.dirname(__file__), "commemorated_persons.csv")
+        if os.path.exists(csv_path):
+            with open(csv_path, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    cur.execute(
+                        "INSERT INTO commemorated_persons (sl_no, name) VALUES (%s, %s) ON CONFLICT (sl_no) DO NOTHING",
+                        (int(row["sl_no"]), row["name"])
+                    )
+            conn.commit()
+
     cur.close()
     conn.close()
 
@@ -82,7 +131,7 @@ def init_db():
 @app.before_request
 def require_pin():
     if not REGISTRATION_PIN:
-        return  # no PIN configured, skip auth (not recommended for event day)
+        return
     if request.path in ("/login", "/static") or request.path.startswith("/static/"):
         return
     if not session.get("authed"):
@@ -122,6 +171,13 @@ def dashboard():
     return render_template("dashboard.html")
 
 
+@app.route("/commemorated")
+def commemorated_page():
+    return render_template("commemorated.html")
+
+
+# ---------- Contributor / walk-in search & check-in ----------
+
 @app.route("/api/search")
 def api_search():
     q = request.args.get("q", "").strip()
@@ -133,8 +189,8 @@ def api_search():
 
     cur.execute("""
         SELECT c.id, c.amb_id, c.name, c.phone, c.village, c.photo_url,
-               c.txn_date, c.amount, c.txn_no, c.color_band,
-               ci.id AS checkin_id, ci.checked_in_at, ci.desk
+               c.txn_date, c.amount, c.txn_no,
+               ci.id AS checkin_id, ci.checked_in_at, ci.desk, ci.color_band
         FROM contributors c
         LEFT JOIN checkins ci ON ci.contributor_id = c.id
         WHERE c.phone ILIKE %s OR c.name ILIKE %s OR c.amb_id ILIKE %s
@@ -144,7 +200,7 @@ def api_search():
     contrib_rows = cur.fetchall()
 
     cur.execute("""
-        SELECT id, name, phone, family_count, desk, checked_in_at, color_band
+        SELECT id, name, phone, family_count, desk, checked_in_at, color_band, village
         FROM checkins
         WHERE is_walkin = TRUE AND (phone ILIKE %s OR name ILIKE %s)
         ORDER BY checked_in_at DESC
@@ -168,11 +224,11 @@ def api_search():
             "txn_date": r["txn_date"],
             "amount": r["amount"],
             "txn_no": (r["txn_no"] or "")[-4:] if r["txn_no"] else None,
-            "color_band": r["color_band"],
             "already_checked_in": r["checkin_id"] is not None,
             "checkin_id": r["checkin_id"],
             "checked_in_at": fmt_ist(r["checked_in_at"]),
             "checked_in_desk": r["desk"],
+            "color_band": r["color_band"],
         })
     for r in walkin_rows:
         results.append({
@@ -181,16 +237,16 @@ def api_search():
             "amb_id": None,
             "name": r["name"],
             "phone": r["phone"],
-            "village": None,
+            "village": r["village"],
             "photo_url": None,
             "txn_date": None,
             "amount": None,
             "txn_no": None,
-            "color_band": r["color_band"],
             "already_checked_in": True,
             "checkin_id": r["id"],
             "checked_in_at": fmt_ist(r["checked_in_at"]),
             "checked_in_desk": r["desk"],
+            "color_band": r["color_band"],
         })
     return jsonify(results)
 
@@ -214,18 +270,22 @@ def api_checkin():
             cur.close(); conn.close()
             return jsonify({"ok": False, "error": "Contributor not found"}), 404
 
+        color = next_band_color(cur)
+
         cur.execute("""
-            INSERT INTO checkins (contributor_id, name, phone, amb_id, is_walkin, village, family_count, desk)
-            VALUES (%s, %s, %s, %s, FALSE, %s, %s, %s)
+            INSERT INTO checkins (contributor_id, name, phone, amb_id, is_walkin, village, family_count, desk, color_band)
+            VALUES (%s, %s, %s, %s, FALSE, %s, %s, %s, %s)
             ON CONFLICT (contributor_id) DO NOTHING
             RETURNING id, checked_in_at
         """, (contrib["id"], contrib["name"], contrib["phone"], contrib["amb_id"],
-              contrib["village"], family_count, desk))
+              contrib["village"], family_count, desk, color))
         row = cur.fetchone()
         conn.commit()
 
         if row is None:
-            cur.execute("SELECT checked_in_at, desk FROM checkins WHERE contributor_id = %s", (contributor_id,))
+            cur.execute("""
+                SELECT checked_in_at, desk, color_band FROM checkins WHERE contributor_id = %s
+            """, (contributor_id,))
             existing = cur.fetchone()
             cur.close(); conn.close()
             return jsonify({
@@ -233,6 +293,7 @@ def api_checkin():
                 "already_checked_in": True,
                 "checked_in_at": fmt_ist(existing["checked_in_at"]),
                 "checked_in_desk": existing["desk"],
+                "color_band": existing["color_band"],
             })
 
         cur.close(); conn.close()
@@ -240,6 +301,7 @@ def api_checkin():
             "ok": True, "name": contrib["name"],
             "checkin_id": row["id"],
             "checked_in_at": fmt_ist(row["checked_in_at"]),
+            "color_band": color,
         })
 
     elif mode == "walkin":
@@ -247,8 +309,6 @@ def api_checkin():
         phone = (data.get("phone") or "").strip()
         village = (data.get("village") or "").strip()
         family_count = int(data.get("family_count") or 1)
-        color = (data.get("color") or "").strip().lower()
-        color = color if color in ALLOWED_COLORS else None
         confirm_dup = bool(data.get("confirm"))
 
         if not name:
@@ -272,6 +332,8 @@ def api_checkin():
                     "existing_at": fmt_ist(existing["checked_in_at"]),
                 })
 
+        color = next_band_color(cur)
+
         cur.execute("""
             INSERT INTO checkins (contributor_id, name, phone, amb_id, is_walkin, village, family_count, desk, color_band)
             VALUES (NULL, %s, %s, NULL, TRUE, %s, %s, %s, %s)
@@ -284,74 +346,15 @@ def api_checkin():
             "ok": True, "name": name,
             "checkin_id": row["id"],
             "checked_in_at": fmt_ist(row["checked_in_at"]),
+            "color_band": color,
         })
 
     cur.close(); conn.close()
     return jsonify({"ok": False, "error": "Invalid mode"}), 400
 
 
-@app.route("/api/color_stats")
-def api_color_stats():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT color, COUNT(*) FROM (
-            SELECT ct.color_band AS color
-            FROM checkins ci JOIN contributors ct ON ci.contributor_id = ct.id
-            WHERE ci.is_walkin = FALSE
-            UNION ALL
-            SELECT color_band AS color FROM checkins WHERE is_walkin = TRUE
-        ) t
-        GROUP BY color
-    """)
-    rows = cur.fetchall()
-    cur.close(); conn.close()
-
-    counts = {"green": 0, "yellow": 0, "red": 0, "blue": 0, "unassigned": 0}
-    for color, c in rows:
-        if color in counts:
-            counts[color] = c
-        else:
-            counts["unassigned"] += c
-    return jsonify(counts)
-
-
-@app.route("/api/set_checkin_color", methods=["POST"])
-def api_set_checkin_color():
-    data = request.get_json(force=True)
-    checkin_id = data.get("checkin_id")
-    color = (data.get("color") or "").strip().lower()
-    if color not in ALLOWED_COLORS:
-        return jsonify({"ok": False, "error": "Invalid color"}), 400
-
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("UPDATE checkins SET color_band = %s WHERE id = %s AND is_walkin = TRUE", (color, checkin_id))
-    conn.commit()
-    cur.close(); conn.close()
-    return jsonify({"ok": True, "color": color})
-
-
-@app.route("/api/set_color", methods=["POST"])
-def api_set_color():
-    data = request.get_json(force=True)
-    contributor_id = data.get("contributor_id")
-    color = (data.get("color") or "").strip().lower()
-    if color not in ALLOWED_COLORS:
-        return jsonify({"ok": False, "error": "Invalid color"}), 400
-
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("UPDATE contributors SET color_band = %s WHERE id = %s", (color, contributor_id))
-    conn.commit()
-    cur.close(); conn.close()
-    return jsonify({"ok": True, "color": color})
-
-
 @app.route("/api/undo_checkin", methods=["POST"])
 def api_undo_checkin():
-    """Undo a check-in, but only within 10 minutes of it happening (safety window
-    so it can't be used to erase historical attendance records)."""
     data = request.get_json(force=True)
     checkin_id = data.get("checkin_id")
     if not checkin_id:
@@ -373,15 +376,32 @@ def api_undo_checkin():
     return jsonify({"ok": False, "error": "Too late to undo (10 min window passed) or already removed"}), 400
 
 
+@app.route("/api/color_stats")
+def api_color_stats():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT color_band, COUNT(*) FROM checkins GROUP BY color_band")
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+
+    counts = {"green": 0, "yellow": 0, "red": 0, "blue": 0, "unassigned": 0}
+    for color, c in rows:
+        if color in counts:
+            counts[color] = c
+        else:
+            counts["unassigned"] += c
+    return jsonify(counts)
+
+
 @app.route("/api/export")
 def api_export():
-    import csv
     import io
+    from flask import Response
 
     conn = get_conn()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
-        SELECT amb_id, name, phone, village, family_count, is_walkin, desk, checked_in_at
+        SELECT amb_id, name, phone, village, family_count, is_walkin, desk, color_band, checked_in_at
         FROM checkins
         ORDER BY checked_in_at ASC
     """)
@@ -389,8 +409,8 @@ def api_export():
     cur.close(); conn.close()
 
     output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["AMB ID", "Name", "Phone", "Village", "People Count", "Type", "Desk", "Checked In At (IST)"])
+    writer = __import__("csv").writer(output)
+    writer.writerow(["AMB ID", "Name", "Phone", "Area", "People Count", "Type", "Desk", "Color Band", "Checked In At (IST)"])
     for r in rows:
         writer.writerow([
             r["amb_id"] or "",
@@ -400,10 +420,10 @@ def api_export():
             r["family_count"],
             "Walk-in" if r["is_walkin"] else "Contributor",
             r["desk"] or "",
+            r["color_band"] or "",
             r["checked_in_at"].astimezone(IST).strftime("%Y-%m-%d %I:%M %p") if r["checked_in_at"] else "",
         ])
 
-    from flask import Response
     return Response(
         output.getvalue(),
         mimetype="text/csv",
@@ -426,7 +446,7 @@ def api_stats():
     walkin_count = cur.fetchone()["c"]
 
     cur.execute("""
-        SELECT name, phone, village, family_count, desk, is_walkin, checked_in_at
+        SELECT name, phone, village, family_count, desk, is_walkin, checked_in_at, color_band
         FROM checkins ORDER BY checked_in_at DESC LIMIT 25
     """)
     recent = cur.fetchall()
@@ -442,6 +462,95 @@ def api_stats():
         "walkin_checkins": walkin_count,
         "recent": recent,
     })
+
+
+# ---------- Commemorated persons ----------
+
+@app.route("/api/search_commemorated")
+def api_search_commemorated():
+    q = request.args.get("q", "").strip()
+    if len(q) < 1:
+        return jsonify([])
+
+    conn = get_conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT cp.id, cp.sl_no, cp.name,
+               cc.id AS checkin_id, cc.visitor_name, cc.visitor_phone, cc.desk, cc.checked_in_at
+        FROM commemorated_persons cp
+        LEFT JOIN commemorated_checkins cc ON cc.commemorated_id = cp.id
+        WHERE cp.name ILIKE %s OR CAST(cp.sl_no AS TEXT) = %s
+        ORDER BY cp.name
+        LIMIT 20
+    """, (f"%{q}%", q))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+
+    results = []
+    for r in rows:
+        results.append({
+            "commemorated_id": r["id"],
+            "sl_no": r["sl_no"],
+            "name": r["name"],
+            "already_checked_in": r["checkin_id"] is not None,
+            "visitor_name": r["visitor_name"],
+            "visitor_phone": r["visitor_phone"],
+            "checked_in_desk": r["desk"],
+            "checked_in_at": fmt_ist(r["checked_in_at"]),
+        })
+    return jsonify(results)
+
+
+@app.route("/api/checkin_commemorated", methods=["POST"])
+def api_checkin_commemorated():
+    data = request.get_json(force=True)
+    commemorated_id = data.get("commemorated_id")
+    visitor_name = (data.get("visitor_name") or "").strip()
+    visitor_phone = (data.get("visitor_phone") or "").strip()
+    desk = (data.get("desk") or "Unknown Desk").strip()
+
+    if not commemorated_id:
+        return jsonify({"ok": False, "error": "commemorated_id required"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        INSERT INTO commemorated_checkins (commemorated_id, visitor_name, visitor_phone, desk)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (commemorated_id) DO NOTHING
+        RETURNING id, checked_in_at
+    """, (commemorated_id, visitor_name, visitor_phone, desk))
+    row = cur.fetchone()
+    conn.commit()
+
+    if row is None:
+        cur.execute("""
+            SELECT visitor_name, desk, checked_in_at FROM commemorated_checkins WHERE commemorated_id = %s
+        """, (commemorated_id,))
+        existing = cur.fetchone()
+        cur.close(); conn.close()
+        return jsonify({
+            "ok": False,
+            "already_checked_in": True,
+            "visitor_name": existing["visitor_name"],
+            "checked_in_desk": existing["desk"],
+            "checked_in_at": fmt_ist(existing["checked_in_at"]),
+        })
+
+    cur.close(); conn.close()
+    return jsonify({"ok": True, "checkin_id": row["id"], "checked_in_at": fmt_ist(row["checked_in_at"])})
+
+
+@app.route("/api/commemorated_stats")
+def api_commemorated_stats():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM commemorated_persons")
+    total = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM commemorated_checkins")
+    checked_in = cur.fetchone()[0]
+    cur.close(); conn.close()
+    return jsonify({"total": total, "checked_in": checked_in})
 
 
 with app.app_context():
