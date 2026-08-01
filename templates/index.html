@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block nav %}<a href="/dashboard">Live View →</a>{% endblock %}
+{% block nav %}<a href="/dashboard">Live View</a> · <a href="/commemorated">Commemorated</a>{% endblock %}
 {% block content %}
 
 <div class="card" style="padding:10px 16px;">
@@ -8,7 +8,7 @@
 </div>
 
 <div class="card" style="padding:12px 16px;">
-  <div style="font-size:12px;color:#6b7280;margin-bottom:8px;">Arrived by band</div>
+  <div style="font-size:12px;color:#6b7280;margin-bottom:8px;">Bands given out (auto-assigned, 170 each, cycles)</div>
   <div id="colorStatsBar" style="display:flex;gap:10px;flex-wrap:wrap;"></div>
 </div>
 
@@ -31,10 +31,22 @@
       </div>
     </div>
     <div style="margin-top:8px;">
-      <span style="font-size:13px;color:#6b7280;margin-right:6px;">Band:</span>
-      <span id="walkinColorDots"></span>
+      <span style="font-size:13px;color:#6b7280;margin-right:6px;">Area:</span>
+      <button type="button" id="areaEluruBtn" onclick="selectArea('Eluru')"
+              style="width:auto;display:inline-block;padding:8px 16px;font-size:14px;background:#e5e7eb;color:#111827;border-radius:6px;margin-right:6px;">Eluru</button>
+      <button type="button" id="areaOtherBtn" onclick="selectArea('other')"
+              style="width:auto;display:inline-block;padding:8px 16px;font-size:14px;background:#e5e7eb;color:#111827;border-radius:6px;">Other</button>
+      <input id="wAreaOther" placeholder="Type area name" style="display:none;margin-top:8px;font-size:16px;padding:10px;" />
     </div>
-    <button id="walkinBtn" onclick="submitWalkin()" style="font-size:18px;padding:16px;background:#374151;margin-top:8px;">Check In Walk-in</button>
+    <button id="walkinBtn" onclick="submitWalkin()" style="font-size:18px;padding:16px;background:#374151;margin-top:10px;">Check In Walk-in</button>
+  </div>
+</div>
+
+<div class="card">
+  <strong style="font-size:14px;">🕯️ Commemorating someone? (optional)</strong>
+  <div style="margin-top:8px;">
+    <input id="commemSearch" placeholder="Search commemorated person's name..." autocomplete="off" style="font-size:16px;padding:12px;" />
+    <div id="commemResults"></div>
   </div>
 </div>
 
@@ -55,6 +67,8 @@
   }
   .big-checkin:disabled { background:#9ca3af; }
   #undoLink { color:#93c5fd; text-decoration:underline; cursor:pointer; margin-left:10px; }
+  .area-active { background:#111827 !important; color:white !important; }
+  .commem-card { border:1px solid #e5e7eb; border-radius:8px; padding:10px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; }
 </style>
 
 <script>
@@ -79,6 +93,8 @@ searchBox.addEventListener('keydown', (e) => {
   }
 });
 
+const COLOR_HEX = { green: '#16a34a', yellow: '#eab308', red: '#dc2626', blue: '#2563eb' };
+
 async function doSearch(q) {
   const res = await fetch('/api/search?q=' + encodeURIComponent(q));
   const data = await res.json();
@@ -92,17 +108,17 @@ async function doSearch(q) {
     <div class="result-card" id="card-${i}">
       <div class="result-top">
         <div>
-          <div class="result-name">${r.name} <span class="chip" style="background:${r.source === 'walkin' ? '#fef3c7' : '#e0f2fe'};">${r.source === 'walkin' ? 'walk-in (not on contributor list)' : 'contributor'}</span></div>
+          <div class="result-name">${r.name} <span class="chip" style="background:${r.source === 'walkin' ? '#fef3c7' : '#e0f2fe'};">${r.source === 'walkin' ? 'walk-in' : 'contributor'}</span></div>
           <div class="result-sub">
             ${r.amb_id ? `<span class="chip">${r.amb_id}</span>` : ''}
             ${r.phone ? `<span class="chip">${r.phone}</span>` : ''}
+            ${r.village ? `<span class="chip">${r.village}</span>` : ''}
             ${r.txn_date ? `<span class="chip">${r.txn_date}</span>` : ''}
             ${r.amount ? `<span class="chip">₹${r.amount}</span>` : ''}
             ${r.txn_no ? `<span class="chip">txn ..${r.txn_no}</span>` : ''}
           </div>
-          ${r.source === 'contributor' ? colorPickerHtml(r, i) : walkinColorPickerHtml(r, i)}
         </div>
-        ${r.already_checked_in ? `<span class="badge">✓ ${r.checked_in_at}<br>${r.checked_in_desk}</span>` : ''}
+        ${r.already_checked_in ? `<span class="badge" style="${r.color_band ? 'background:'+COLOR_HEX[r.color_band]+';color:white;' : ''}">✓ ${r.checked_in_at}<br>${r.checked_in_desk}${r.color_band ? '<br>'+r.color_band.toUpperCase()+' band' : ''}</span>` : ''}
       </div>
       ${(r.already_checked_in || r.source === 'walkin') ? '' : `
       <div class="result-actions">
@@ -115,82 +131,6 @@ async function doSearch(q) {
       </div>`}
     </div>
   `).join('');
-}
-
-const COLOR_HEX = { green: '#16a34a', yellow: '#eab308', red: '#dc2626', blue: '#2563eb' };
-
-function colorPickerHtml(r, i) {
-  if (r.color_band) {
-    return `<div style="margin-top:6px;">
-      <span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;">
-        <span style="width:14px;height:14px;border-radius:50%;background:${COLOR_HEX[r.color_band]};display:inline-block;"></span>
-        ${r.color_band.charAt(0).toUpperCase() + r.color_band.slice(1)} band
-        <span style="color:#93c5fd;text-decoration:underline;cursor:pointer;" onclick="showColorPicker(${i})">change</span>
-      </span>
-      <div id="colorpicker-${i}" style="display:none;margin-top:6px;">${colorDots(r.contributor_id, i)}</div>
-    </div>`;
-  }
-  return `<div style="margin-top:6px;font-size:12.5px;color:#6b7280;">
-    Assign band: ${colorDots(r.contributor_id, i)}
-  </div>`;
-}
-
-function colorDots(contributorId, i) {
-  return Object.keys(COLOR_HEX).map(c => `
-    <span onclick="assignColor(${contributorId}, '${c}', ${i})"
-          style="display:inline-block;width:22px;height:22px;border-radius:50%;background:${COLOR_HEX[c]};
-                 margin-right:6px;cursor:pointer;border:2px solid white;box-shadow:0 0 0 1px #d1d5db;"></span>
-  `).join('');
-}
-
-function walkinColorPickerHtml(r, i) {
-  if (r.color_band) {
-    return `<div style="margin-top:6px;">
-      <span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;">
-        <span style="width:14px;height:14px;border-radius:50%;background:${COLOR_HEX[r.color_band]};display:inline-block;"></span>
-        ${r.color_band.charAt(0).toUpperCase() + r.color_band.slice(1)} band
-        <span style="color:#93c5fd;text-decoration:underline;cursor:pointer;" onclick="showColorPicker(${i})">change</span>
-      </span>
-      <div id="colorpicker-${i}" style="display:none;margin-top:6px;">${walkinColorDots(r.checkin_id, i)}</div>
-    </div>`;
-  }
-  return `<div style="margin-top:6px;font-size:12.5px;color:#6b7280;">
-    Assign band: ${walkinColorDots(r.checkin_id, i)}
-  </div>`;
-}
-
-function walkinColorDots(checkinId, i) {
-  return Object.keys(COLOR_HEX).map(c => `
-    <span onclick="assignWalkinColor(${checkinId}, '${c}', ${i})"
-          style="display:inline-block;width:22px;height:22px;border-radius:50%;background:${COLOR_HEX[c]};
-                 margin-right:6px;cursor:pointer;border:2px solid white;box-shadow:0 0 0 1px #d1d5db;"></span>
-  `).join('');
-}
-
-async function assignWalkinColor(checkinId, color, i) {
-  await fetch('/api/set_checkin_color', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({checkin_id: checkinId, color})
-  });
-  if (lastResults[i]) lastResults[i].color_band = color;
-  doSearch(searchBox.value.trim());
-  refreshColorStats();
-}
-
-function showColorPicker(i) {
-  document.getElementById(`colorpicker-${i}`).style.display = 'block';
-}
-
-async function assignColor(contributorId, color, i) {
-  await fetch('/api/set_color', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({contributor_id: contributorId, color})
-  });
-  if (lastResults[i]) lastResults[i].color_band = color;
-  doSearch(searchBox.value.trim());
-  refreshColorStats();
 }
 
 function adjustCount(i, delta) {
@@ -211,14 +151,14 @@ async function checkinExisting(contributorId, i) {
   });
   const data = await res.json();
   if (data.ok) {
-    showToastWithUndo(`✓ ${data.name} checked in at ${data.checked_in_at}`, data.checkin_id);
+    showToastWithUndo(`✓ ${data.name} checked in at ${data.checked_in_at} — ${data.color_band.toUpperCase()} band`, data.checkin_id);
     refreshColorStats();
     searchBox.value = '';
     document.getElementById('results').innerHTML = '';
     lastResults = [];
     searchBox.focus();
   } else if (data.already_checked_in) {
-    showToast(`Already checked in at ${data.checked_in_at} by ${data.checked_in_desk}`, 3000);
+    showToast(`Already checked in at ${data.checked_in_at} by ${data.checked_in_desk} (${data.color_band || 'no'} band)`, 3500);
     if (btn) { btn.disabled = false; btn.textContent = 'Check In'; }
   } else {
     showToast('Error: ' + (data.error || 'unknown'));
@@ -232,27 +172,21 @@ function adjustWalkinCount(delta) {
   document.getElementById('wFamilyDisplay').textContent = walkinCount;
 }
 
-let selectedWalkinColor = null;
-function renderWalkinColorDots() {
-  const el = document.getElementById('walkinColorDots');
-  el.innerHTML = Object.keys(COLOR_HEX).map(c => `
-    <span onclick="selectWalkinColor('${c}')"
-          style="display:inline-block;width:24px;height:24px;border-radius:50%;background:${COLOR_HEX[c]};
-                 margin-right:6px;cursor:pointer;border:3px solid ${selectedWalkinColor === c ? '#111827' : 'white'};
-                 box-shadow:0 0 0 1px #d1d5db;"></span>
-  `).join('');
+let selectedArea = null;
+function selectArea(area) {
+  selectedArea = area;
+  document.getElementById('areaEluruBtn').classList.toggle('area-active', area === 'Eluru');
+  document.getElementById('areaOtherBtn').classList.toggle('area-active', area === 'other');
+  document.getElementById('wAreaOther').style.display = (area === 'other') ? 'block' : 'none';
+  if (area === 'other') document.getElementById('wAreaOther').focus();
 }
-function selectWalkinColor(c) {
-  selectedWalkinColor = (selectedWalkinColor === c) ? null : c;
-  renderWalkinColorDots();
-}
-renderWalkinColorDots();
 
 async function submitWalkin(forceConfirm) {
   const name = document.getElementById('wName').value.trim();
   const phone = document.getElementById('wPhone').value.trim();
   const desk = deskInput.value || 'Unknown Desk';
   const btn = document.getElementById('walkinBtn');
+  const village = selectedArea === 'other' ? document.getElementById('wAreaOther').value.trim() : (selectedArea || '');
   if (!name) { showToast('Please enter a name'); return; }
   if (btn.disabled) return;
   btn.disabled = true; btn.textContent = 'Checking in...';
@@ -260,7 +194,7 @@ async function submitWalkin(forceConfirm) {
   const res = await fetch('/api/checkin', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({mode: 'walkin', name, phone, village: '', family_count: walkinCount, desk, color: selectedWalkinColor, confirm: !!forceConfirm})
+    body: JSON.stringify({mode: 'walkin', name, phone, village, family_count: walkinCount, desk, confirm: !!forceConfirm})
   });
   const data = await res.json();
   btn.disabled = false; btn.textContent = 'Check In Walk-in';
@@ -269,21 +203,18 @@ async function submitWalkin(forceConfirm) {
     const proceed = confirm(
       `"${data.existing_name}" was already added as a walk-in at ${data.existing_at} (${data.existing_desk}).\n\nAdd this as a separate person anyway?`
     );
-    if (proceed) {
-      submitWalkin(true);
-    }
+    if (proceed) { submitWalkin(true); }
     return;
   }
 
   if (data.ok) {
-    showToastWithUndo(`✓ ${data.name} checked in at ${data.checked_in_at}`, data.checkin_id);
+    showToastWithUndo(`✓ ${data.name} checked in at ${data.checked_in_at} — ${data.color_band.toUpperCase()} band`, data.checkin_id);
     refreshColorStats();
     document.getElementById('wName').value = '';
     document.getElementById('wPhone').value = '';
+    document.getElementById('wAreaOther').value = '';
     walkinCount = 1;
     document.getElementById('wFamilyDisplay').textContent = 1;
-    selectedWalkinColor = null;
-    renderWalkinColorDots();
     searchBox.focus();
   } else {
     showToast('Error: ' + (data.error || 'unknown'));
@@ -307,11 +238,7 @@ async function undoCheckin(checkinId, el) {
   });
   const data = await res.json();
   const t = document.getElementById('toast');
-  if (data.ok) {
-    t.textContent = 'Undone.';
-  } else {
-    t.textContent = 'Could not undo: ' + (data.error || 'unknown');
-  }
+  t.textContent = data.ok ? 'Undone.' : 'Could not undo: ' + (data.error || 'unknown');
   setTimeout(() => t.style.display = 'none', 2500);
   refreshColorStats();
 }
@@ -330,5 +257,54 @@ async function refreshColorStats() {
 }
 refreshColorStats();
 setInterval(refreshColorStats, 6000);
+
+// ---- Commemorated persons inline search ----
+let commemDebounce;
+const commemSearch = document.getElementById('commemSearch');
+commemSearch.addEventListener('input', (e) => {
+  clearTimeout(commemDebounce);
+  const q = e.target.value.trim();
+  if (q.length < 1) { document.getElementById('commemResults').innerHTML = ''; return; }
+  commemDebounce = setTimeout(() => doCommemSearch(q), 200);
+});
+
+async function doCommemSearch(q) {
+  const res = await fetch('/api/search_commemorated?q=' + encodeURIComponent(q));
+  const data = await res.json();
+  const box = document.getElementById('commemResults');
+  if (data.length === 0) {
+    box.innerHTML = '<p style="color:#6b7280;font-size:13px;">No match found.</p>';
+    return;
+  }
+  box.innerHTML = data.map(r => `
+    <div class="commem-card">
+      <div>
+        <div style="font-weight:600;font-size:14px;">${r.name}</div>
+        ${r.already_checked_in ? `<div class="result-sub">Visited by ${r.visitor_name || 'someone'} at ${r.checked_in_at} (${r.checked_in_desk})</div>` : ''}
+      </div>
+      ${r.already_checked_in
+        ? `<span class="badge">✓ Done</span>`
+        : `<button style="width:auto;padding:8px 14px;font-size:13px;background:#7c3aed;" onclick="checkinCommem(${r.commemorated_id}, this)">Mark Visited</button>`}
+    </div>
+  `).join('');
+}
+
+async function checkinCommem(commemId, btn) {
+  btn.disabled = true;
+  const desk = deskInput.value || 'Unknown Desk';
+  const res = await fetch('/api/checkin_commemorated', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({commemorated_id: commemId, visitor_name: '', visitor_phone: '', desk})
+  });
+  const data = await res.json();
+  if (data.ok || data.already_checked_in) {
+    showToast(data.ok ? 'Marked as visited.' : 'Already marked visited.');
+    doCommemSearch(commemSearch.value.trim());
+  } else {
+    showToast('Error marking visited');
+    btn.disabled = false;
+  }
+}
 </script>
 {% endblock %}
