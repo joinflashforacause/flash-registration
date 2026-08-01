@@ -76,7 +76,8 @@ async function refresh() {
     <div class="feed-item">
       <div>
         <strong>${r.name}</strong> ${r.is_walkin ? '<span class="badge warn">walk-in</span>' : ''}
-        <div class="result-sub">${r.desk || ''} ${r.family_count > 1 ? '· ' + r.family_count + ' people' : ''}</div>
+        <div class="result-sub">${r.desk || ''} ${r.color_band ? '· ' + r.color_band.toUpperCase() + ' band' : ''}</div>
+        ${r.commemorated_name ? `<div class="result-sub">🕯️ Commemorating: ${r.commemorated_name}</div>` : ''}
       </div>
       <div class="result-sub">${r.checked_in_at}</div>
     </div>
