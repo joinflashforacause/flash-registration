@@ -499,6 +499,26 @@ def api_search_commemorated():
     return jsonify(list(seen.values()))
 
 
+@app.route("/api/commemorated_recent")
+def api_commemorated_recent():
+    conn = get_conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT cp.sl_no, cp.name AS commemorated_name,
+               ci.name AS visitor_name, ci.phone AS visitor_phone, ci.desk, ci.checked_in_at, ci.color_band
+        FROM checkins ci
+        JOIN commemorated_persons cp ON cp.id = ci.commemorated_id
+        WHERE ci.commemorated_id IS NOT NULL
+        ORDER BY ci.checked_in_at DESC
+        LIMIT 30
+    """)
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    for r in rows:
+        r["checked_in_at"] = fmt_ist(r["checked_in_at"])
+    return jsonify(rows)
+
+
 @app.route("/api/commemorated_stats")
 def api_commemorated_stats():
     conn = get_conn()
